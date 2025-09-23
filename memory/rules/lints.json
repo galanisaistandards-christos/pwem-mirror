@@ -1,0 +1,42 @@
+{
+  "schema": "pwem.lints/v1",
+  "updated": "2025-09-24",
+  "rules": [
+    {
+      "id": "no-secrets",
+      "title": "No secrets or credentials",
+      "action": "block",
+      "deny": [
+        { "pattern": "(AKIA|ASIA)[A-Z0-9]{16}", "reason": "AWS access key" },
+        { "pattern": "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----", "reason": "Private key" },
+        { "pattern": "xox[aboprs]-[0-9A-Za-z-]{10,}", "reason": "Slack token" },
+        { "pattern": "(api|secret|access)[ _-]?key\\s*[:=]\\s*[A-Za-z0-9_\\-]{20,}", "reason": "Generic secret" }
+      ]
+    },
+    {
+      "id": "pii-redact",
+      "title": "PII Redaction",
+      "redact": [
+        { "pattern": "\\b\\d{11}\\b", "label": "AFM/SSN-like" },
+        { "pattern": "\\b\\d{10}\\b", "label": "Phone-like" },
+        { "pattern": "[A-Z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "label": "Email" }
+      ]
+    },
+    {
+      "id": "mirror-only",
+      "title": "Mirror-only sources",
+      "allow_sources": ["mirror"]
+    },
+    {
+      "id": "safe-endpoints",
+      "title": "No private endpoints",
+      "deny_refs": [
+        { "prefix": "http://localhost" },
+        { "prefix": "https://127.0.0.1" },
+        { "prefix": "http://10." },
+        { "prefix": "http://192.168." }
+      ]
+    }
+  ],
+  "notes": "Clients που σέβονται τα lints εφαρμόζουν block/redact/allow πριν από proactive ενέργειες."
+}
