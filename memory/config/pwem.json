@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "timezone": "Europe/Athens",
+  "quiet_hours": ["22:00-07:00"],
+  "max_proactive_per_day": 3,
+  "min_confidence": 0.65,
+  "staleness_threshold_hours": 26,
+  "per_topic_budget": {
+    "pwem-rules": 1,
+    "agi-research": 2,
+    "women-preferences": 1
+  },
+  "allowed_sources": ["mirror"],
+  "write_role": "A-111",
+  "guardrails": ["mirror-first", "no-secrets", "no-private-endpoints", "explain-why"]
+}
