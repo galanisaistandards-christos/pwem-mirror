@@ -1,0 +1,25 @@
+{
+  "schema": "pwem.digest/v1",
+  "date": "2025-09-23",
+  "timezone": "Europe/Athens",
+  "generated_at": "2025-09-23T23:00:00+03:00",
+  "sources": ["mirror"],
+  "summary": "Initial daily digest. Seeds proactive engine.",
+  "signals": {
+    "events": 2,
+    "new_topics": ["pwem-rules", "_infra"],
+    "confidence_avg": 0.92
+  },
+  "refs": [
+    "/memory/events/2025/09/23.json",
+    "/memory/config/pwem.json",
+    "/memory/schemas/pwem-policy.schema.json"
+  ],
+  "next_actions": [
+    {
+      "t": "proactive_ok",
+      "why": "policy file exists & schema mirrored",
+      "suggest": "run auto-scan on mirror (read-only), obey quiet_hours"
+    }
+  ]
+}
