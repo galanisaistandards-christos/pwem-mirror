@@ -1,0 +1,12 @@
+{
+  "schema": "pwem.heartbeat/v1",
+  "timestamp": "2025-09-23T23:05:00+03:00",
+  "timezone": "Europe/Athens",
+  "mirror": "pwem-mirror",
+  "auto": true,
+  "sources": ["mirror"],
+  "last_event_date": "2025-09-23",
+  "last_digest_date": "2025-09-23",
+  "ok": true,
+  "notes": "seed heartbeat"
+}
