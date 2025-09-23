@@ -1,0 +1,24 @@
+{
+  "schema": "pwem.events/v1",
+  "date": "2025-09-23",
+  "timezone": "Europe/Athens",
+  "generated_at": "2025-09-23T22:45:00+03:00",
+  "sources": ["mirror"],
+  "auto": true,
+  "items": [
+    {
+      "t": "digest_ready",
+      "topic_id": "pwem-rules",
+      "confidence": 0.94,
+      "why": "Νέο policy file στο mirror: memory/config/pwem.json",
+      "refs": ["/memory/config/pwem.json"]
+    },
+    {
+      "t": "schema_mirror_ok",
+      "topic_id": "_infra",
+      "confidence": 0.90,
+      "why": "Καθρέφτισμα schema στο mirror για CI",
+      "refs": ["/memory/schemas/pwem-policy.schema.json"]
+    }
+  ]
+}
