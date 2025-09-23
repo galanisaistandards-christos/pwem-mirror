@@ -1,0 +1,59 @@
+{
+  "schema": "pwem.status/v1",
+  "timestamp": "2025-09-23T23:59:00+03:00",
+  "timezone": "Europe/Athens",
+  "mirror": "pwem-mirror",
+
+  "ok": true,
+
+  "latest": {
+    "event_date": "2025-09-23",
+    "digest_date": "2025-09-23",
+    "heartbeat_ts": "2025-09-23T23:58:00+03:00"
+  },
+
+  "budgets": {
+    "policy": {
+      "max_proactive_per_day": 3,
+      "per_topic": {
+        "pwem-rules": 1,
+        "agi-research": 2,
+        "women-preferences": 1
+      }
+    },
+    "used_today": {
+      "total": 0,
+      "by_topic": {
+        "pwem-rules": 0,
+        "agi-research": 0,
+        "women-preferences": 0
+      }
+    }
+  },
+
+  "counters": {
+    "events_today": 1,
+    "digests_today": 1,
+    "new_topics_today": 0
+  },
+
+  "refs": [
+    "/memory/config/pwem.json",
+    "/memory/events/2025/09/23.json",
+    "/memory/digest/daily.json",
+    "/memory/heartbeat.json"
+  ],
+
+  "notes": [
+    "Seed status file; ενημερώνεται/διαβάζεται από τους auto-scanners.",
+    "Χρησιμοποιείται για γρήγορο health-check και ελέγχους budget."
+  ],
+
+  "next_actions": [
+    {
+      "t": "proactive_scan",
+      "why": "ok & budgets διαθέσιμα",
+      "suggest": "run/digest"
+    }
+  ]
+}
