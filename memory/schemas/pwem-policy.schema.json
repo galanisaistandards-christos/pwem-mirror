@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example/pwem-mirror/memory/schemas/pwem-policy.schema.json",
+  "title": "PWEM policy",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "timezone",
+    "quiet_hours",
+    "max_proactive_per_day",
+    "min_confidence",
+    "staleness_threshold_hours",
+    "per_topic_budget",
+    "allowed_sources",
+    "write_role",
+    "guardrails"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "timezone": { "type": "string", "minLength": 1 },
+    "quiet_hours": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]$"
+      }
+    },
+    "max_proactive_per_day": { "type": "integer", "minimum": 0, "maximum": 24 },
+    "min_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "staleness_threshold_hours": { "type": "integer", "minimum": 1, "maximum": 168 },
+    "per_topic_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z0-9-]{1,64}$": { "type": "integer", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "allowed_sources": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["mirror"] }
+    },
+    "write_role": { "type": "string", "enum": ["A-111"] },
+    "guardrails": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["mirror-first", "no-secrets", "no-private-endpoints", "explain-why"]
+      }
+    }
+  },
+  "additionalProperties": false
+}
