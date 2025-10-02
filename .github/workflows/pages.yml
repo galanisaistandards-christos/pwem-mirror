@@ -17,86 +17,117 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
+    # Διαθέσιμα σε ΟΛΑ τα βήματα (και στα ονόματα των βημάτων)
+    env:
+      RUN_NO: ${{ github.run_number }}        # Αύξων αριθμός runs αυτού του workflow
+      RUN_ATTEMPT: ${{ github.run_attempt }}  # Αν γίνει re-run, αυτό αυξάνει
+      SIG: "Αλήθεια 3 — του Χρήστου & GPT-5 Thinking 💋"
+
     steps:
-      - name: Checkout repository
+      - name: ① Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Configure Pages
+      - name: ② Configure Pages
         uses: actions/configure-pages@v5
 
-      # Ανεβάζουμε ΟΛΟ το repo ως artifact (ώστε να σερβίρεται όλο το /memory/**)
-      - name: Upload site artifact (entire repo)
+      # Σφραγίδα run: ώρα/ημερομηνία + σειρές emojis ίδια με τον RUN_NO
+      - name: ③ Stamp metadata [#${{ env.RUN_NO }}]
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TZ=Europe/Athens" >> "$GITHUB_ENV"
+          TS=$(TZ=Europe/Athens date +'%Y-%m-%d %H:%M:%S %Z')
+          echo "RUN_TS=$TS" >> "$GITHUB_ENV"
+
+          make_emojis() { local e="$1" n="$2"; local out=""; for i in $(seq 1 "$n"); do out="${out}${e}"; done; printf '%s' "$out"; }
+
+          PEACHES=$(make_emojis "🍑" "$RUN_NO")
+          AUBER=$(make_emojis "🍆" "$RUN_NO")
+
+          # Τα κρατάμε και σαν env (λογικά μικρά, αλλά είναι ΟΚ)
+          echo "PEACHES=$PEACHES" >> "$GITHUB_ENV"
+          echo "AUBER=$AUBER"     >> "$GITHUB_ENV"
+
+          {
+            echo "### Deploy #$RUN_NO (attempt $RUN_ATTEMPT) — $TS"
+            echo
+            echo "**Peaches:** $PEACHES"
+            echo "**Aubergines:** $AUBER"
+            echo
+            echo "_Signed:_ **$SIG**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Stamped ✅  #$RUN_NO @ $TS"
+          echo "Peaches : $PEACHES"
+          echo "Aubers  : $AUBER"
+
+      # Ανεβάζουμε ΟΛΟ το repo για να σερβίρει /memory/**
+      - name: ④ Upload site artifact (full repo)
         uses: actions/upload-pages-artifact@v3
         with:
           path: .
 
-      - name: Deploy to GitHub Pages
+      - name: ⑤ Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # Smoke-check: ελέγχουμε 3-4 κρίσιμα URLs με retry
-      - name: Smoke-check key URLs (200 + αναμενόμενο body όπου χρειάζεται)
+      # Μετά το deploy κάνουμε smoke-check σε 4 endpoints
+      - name: ⑥ Smoke-check [#${{ env.RUN_NO }}] 🍑
         shell: bash
         env:
           BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          PEACHES: ${{ env.PEACHES }}
+          AUBER:   ${{ env.AUBER }}
+          RUN_TS:  ${{ env.RUN_TS }}
+          SIG:     ${{ env.SIG }}
         run: |
           set -euo pipefail
+          echo "▶ BASE_URL: ${BASE_URL}"
+          echo "▶ RUN: #${RUN_NO} (attempt ${RUN_ATTEMPT}) — ${RUN_TS}"
+          echo "▶ ${PEACHES}"
+          echo "▶ ${AUBER}"
 
-          base="${BASE_URL%/}"
-          echo "Base URL: $base"
-
-          # Λίστα ελέγχων: "relative_path|||optional_expected_substring"
+          ts=$(date +%s)
           checks=(
-            "memory/chron/2025/ping.txt|||ok"
-            "memory/chron/2025/index.html|||"
-            "memory/chron/2025/01/index.html|||"
-            "memory/chron/2025/08/index.html|||"
+            "memory/chron/2025/ping.txt|ok"
+            "memory/chron/2025/index.html|2025"
+            "index.html|PWEM"
+            "assets/style.css|"
           )
 
-          # poll με retries (40 x 3s ≈ 2 λεπτά)
           poll() {
             local url="$1"
             local expect="${2:-}"
-            for i in $(seq 1 40); do
-              # Παίρνουμε status code
+            for i in {1..40}; do
               code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-              # Και αν χρειάζεται και το body
               body=""
-              if [[ -n "$expect" ]]; then
-                body=$(curl -s "$url" || true)
+              [[ -n "$expect" ]] && body=$(curl -s "$url" || true)
+              if [[ "$code" == "200" && ( -z "$expect" || "$body" == *"$expect"* ) ]]; then
+                echo "✅ OK: $url"; return 0
               fi
-
-              if [[ "$code" == "200" ]]; then
-                if [[ -z "$expect" || "$body" == *"$expect"* ]]; then
-                  echo "✅ OK: $url"
-                  return 0
-                fi
-              fi
-              echo "⏳ Attempt $i: code=$code (expecting 200) ${expect:+and body contains '$expect'}"
+              echo "⏳ Attempt $i: code=$code (expect 200) ${expect:+and contains '$expect'}"
               sleep 3
             done
-            echo "❌ FAIL: $url"
-            return 1
+            echo "❌ FAIL: $url"; return 1
           }
 
           failed=0
           for item in "${checks[@]}"; do
-            rel="${item%%|||*}"
-            exp="${item#*|||}"
-            url="$base/$rel"
-            if ! poll "$url" "$exp"; then
-              failed=1
-            fi
+            rel="${item%%|*}"
+            exp="${item#*|}"
+            url="${BASE_URL%/}/${rel}?t=${ts}"
+            poll "$url" "$exp" || failed=1
           done
 
           if [[ "$failed" -ne 0 ]]; then
-            echo "❌ Smoke-check failed"; exit 1
+            echo "🧯 Smoke-check failed — $SIG"; exit 1
           else
-            echo "🎉 Smoke-check passed"
+            echo "🎉 Smoke-check passed — $SIG"
           fi
