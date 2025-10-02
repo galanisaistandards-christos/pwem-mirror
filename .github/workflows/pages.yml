@@ -3,6 +3,11 @@ name: GitHub Pages — PWEM
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'memory/**'
+      - 'assets/**'
+      - '.nojekyll'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -11,50 +16,77 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "github-pages"
-  cancel-in-progress: true
+  group: 'pages'
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    name: Build static site (_site)
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      # Προαιρετικό, αλλά κρατάμε Jekyll μακριά αν τυχόν ενεργοποιηθεί κάπου.
-      - name: Ensure .nojekyll
+      - name: Prepare _site
         run: |
-          echo > .nojekyll
+          set -euxo pipefail
+          SITE="_site"
+          rm -rf "$SITE"
+          mkdir -p "$SITE"
 
-      # ✨ ΚΡΙΣΙΜΟ: Ανεβάζουμε ΟΛΟ το repo root ως static artifact,
-      # ώστε να περιλαμβάνεται σίγουρα το /memory/chron/2025/01/index.html.
-      - name: Upload static site artifact
+          # Ανέβασε ολόκληρο τον φάκελο "memory" στο _site/memory/
+          rsync -av --delete ./memory/ "$SITE/memory/"
+
+          # (προαιρετικά) ανέβασε assets αν χρειάζονται
+          if [ -d assets ]; then rsync -av --delete ./assets/ "$SITE/assets/"; fi
+
+          # Απενεργοποίηση Jekyll
+          touch "$SITE/.nojekyll"
+
+          # Σιγουρευόμαστε ότι το κρίσιμο αρχείο υπάρχει ΠΡΙΝ το upload
+          test -f "$SITE/memory/chron/2025/01/index.html"
+
+          echo '--- TREE (πρώτα 4 επίπεδα) ---'
+          find "$SITE" -maxdepth 4 -type f | sort
+
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./
-          if-no-files-found: error
+          path: _site
 
-      - name: Deploy to GitHub Pages
-        id: deploy
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
         uses: actions/deploy-pages@v4
 
-      # Μετά το deploy κάνουμε άμεσο smoke-check στα ακριβή URLs
-      # που μας πονοκεφάλιασαν.
-      - name: Post-deploy smoke check
-        shell: bash
+  smoke:
+    name: Post-deploy smoke-check (hard 200)
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for propagation
+        run: sleep 20
+
+      - name: Hit critical URLs
         env:
           BASE: https://galanisstandards-christos.github.io/pwem-mirror
         run: |
           set -euo pipefail
           urls=(
-            "$BASE/index.html"
-            "$BASE/memory/ping.txt"
-            "$BASE/memory/chron/2025/index.html"
             "$BASE/memory/chron/2025/01/index.html"
+            "$BASE/memory/heartbeat.json"
             "$BASE/memory/status.json"
           )
-          # ένα μικρό breathing room ώστε να σερβιριστούν τα νέα α
+          for u in "${urls[@]}"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$u")
+            echo "$code  $u"
+            [ "$code" -eq 200 ] || { echo "Smoke-check failed for $u"; exit 1; }
+          done
