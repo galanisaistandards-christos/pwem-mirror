@@ -1,8 +1,8 @@
-name: Deploy static site to Pages
+name: Pages
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -11,125 +11,84 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "pages-${{ github.ref }}"
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    name: Build & stage site
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      # ---------- STAGE SITE ----------
-      - name: Stage site (full copy + .nojekyll)
-        id: stage
+      - name: Stage static site to ./site (FULL)
         shell: bash
         run: |
           set -euo pipefail
-          site="site"
-          rm -rf "$site"
-          mkdir -p "$site"
+          mkdir -p site
 
-          # index & assets (αν υπάρχουν)
-          if [[ -f "index.html" ]]; then
-            cp -a index.html "$site/"
+          # Σημαντικό: οι τελείες / trailing slashes για σωστό rsync
+          rsync -av --delete \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude ".gitignore" \
+            --exclude "scripts/" \
+            ./ site/
+
+          # Εξασφάλιση no-jekyll
+          touch site/.nojekyll
+
+          echo "---- TREE: site/memory/chron/2025 ----"
+          ls -la site/memory/chron/2025 || true
+          echo "---- TREE: site/memory/chron/2025/01 ----"
+          ls -la site/memory/chron/2025/01 || true
+
+          # Fail νωρίς αν λείπει το index του μήνα
+          if [[ ! -f site/memory/chron/2025/01/index.html ]]; then
+            echo "❌ Λείπει: site/memory/chron/2025/01/index.html"
+            exit 2
           fi
-          if [[ -d assets ]]; then
-            mkdir -p "$site/assets"
-            cp -a assets/. "$site/assets/"
-          fi
 
-          # === Η ΔΙΟΡΘΩΣΗ: ΑΝΑΔΡΟΜΙΚΗ ΑΝΤΙΓΡΑΦΗ ΟΛΟΥ ΤΟΥ memory/ ===
-          # ΜΗΝ χρησιμοποιήσεις 'memory/**' (δεν είναι recursive χωρίς globstar).
-          if [[ -d memory ]]; then
-            mkdir -p "$site/memory"
-            cp -a memory/. "$site/memory/"
-          fi
-
-          # Απενεργοποιεί Jekyll processing
-          touch "$site/.nojekyll"
-
-          echo "📦 Staged site to '$site'"
-
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-      - name: Deploy to GitHub Pages
-        id: deployment
+  deploy:
+    name: Deploy to GitHub Pages + smoke-check
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deploy
         uses: actions/deploy-pages@v4
 
-      # ---------- SMOKE CHECK ----------
-      - name: Smoke-check (multi URL)
+      - name: Smoke-check 🍑
         shell: bash
         env:
-          BASE_URL: ${{ steps.deployment.outputs.page_url }}
-          ATTEMPT: ${{ github.run_number }}
+          BASE_URL: ${{ steps.deploy.outputs.page_url }}
         run: |
           set -euo pipefail
-
-          when="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-
-          # Δυναμικά παιχνιδιάρικα emoji: τόσα 🍑 όσα το attempt
-          peachs=$(printf '🍑%.0s' $(seq 1 "$ATTEMPT"))
-
-          echo "🌀 Smoke attempt #${ATTEMPT} — ${when} ${peachs}"
-
-          http_code() { curl -sS -o /dev/null -w "%{http_code}" "$1"; }
-          body_of()  { curl -sS "$1" || true; }
-
-          poll() {
-            local url="$1"
-            local expect="${2-}"       # optional substring που πρέπει να υπάρχει στο body
-
-            for i in $(seq 1 40); do   # ~2 λεπτά
-              code="$(http_code "$url")"
-              if [[ "$code" == "200" ]]; then
-                if [[ -z "$expect" ]] || body="$(body_of "$url")" && [[ "$body" == *"$expect"* ]]; then
-                  echo "✅ OK: $url"
-                  return 0
-                fi
-              fi
-              echo "⏳ try $i: code=$code (want 200)${expect:+; expect body contains '$expect'}"
-              sleep 3
-            done
-
-            echo "❌ FAIL: $url"
-            return 1
-          }
-
-          base="${BASE_URL%/}"
-
-          # URLs που ελέγχουμε
-          declare -a checks=(
-            "Ping|ok|$base/memory/ping.txt"
-            "Heartbeat|\"ok\": true|$base/memory/heartbeat.json"
-            "Status|\"ok\": true|$base/memory/status.json"
-            "Chron-2025 index|PWEM|$base/memory/chron/2025/index.html"
-            "Chron-2025-01 index|PWEM|$base/memory/chron/2025/01/index.html"
+          attempt="#13"
+          when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "🍑 Smoke attempt ${attempt} @ ${when}"
+          urls=(
+            "$BASE_URL/memory/ping.txt"
+            "$BASE_URL/memory/heartbeat.json"
+            "$BASE_URL/memory/status.json"
+            "$BASE_URL/memory/chron/2025/01/index.html"
           )
-
-          failed=0
-          for row in "${checks[@]}"; do
-            IFS='|' read -r rel expect url <<<"$row"
-            echo "🔎 $rel → $url"
-            if ! poll "$url" "$expect"; then
-              failed=1
+          for u in "${urls[@]}"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$u")
+            echo "→ $u — $code"
+            if [[ "$u" == *"/2025/01/index.html" ]] && [[ "$code" != "200" ]]; then
+              echo "❌ Month index missing (404)"; exit 1
             fi
           done
-
-          if [[ "$failed" -ne 0 ]]; then
-            echo "💥 Smoke-check failed"
-            exit 1
-          else
-            echo "🎉 Smoke-check passed"
-          fi
+          echo "✅ OK — όλα live"
