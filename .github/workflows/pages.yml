@@ -1,13 +1,16 @@
-name: GitHub Pages — PWEM
+name: Pages · Mirror + Memory
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
     paths:
-      - 'memory/**'
-      - 'assets/**'
-      - '.nojekyll'
-      - '.github/workflows/pages.yml'
+      - ".github/workflows/pages.yml"
+      - "memory/**"
+      - "site/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "yarn.lock"
+      - "package-lock.json"
   workflow_dispatch:
 
 permissions:
@@ -16,77 +19,115 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
-  cancel-in-progress: false
+  group: "github-pages"
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build static site (_site)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Prepare _site
+      - name: Stamp attempt
+        id: stamp
+        shell: bash
+        run: |
+          set -e
+          ts="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          raw="$(git log -1 --pretty=%B | tr -d '\r')"
+          if echo "$raw" | grep -q '^\[#\([0-9]\+\)'; then
+            n="$(echo "$raw" | sed -n 's/^\[\#\([0-9]\+\).*/\1/p' | head -n1)"
+          else
+            n="N/A"
+          fi
+          echo "timestamp=$ts" >> "$GITHUB_OUTPUT"
+          echo "attempt=$n" >> "$GITHUB_OUTPUT"
+          echo "[${ts}] attempt #${n} 🍑 — build start"
+
+      - name: Prepare site/
+        shell: bash
         run: |
           set -euxo pipefail
-          SITE="_site"
-          rm -rf "$SITE"
-          mkdir -p "$SITE"
+          mkdir -p site
+          # ensure .nojekyll at artifact root
+          echo > site/.nojekyll
 
-          # Ανέβασε ολόκληρο τον φάκελο "memory" στο _site/memory/
-          rsync -av --delete ./memory/ "$SITE/memory/"
+      - name: Copy memory → site/memory
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p site/memory
+          if [ -d memory ]; then
+            rsync -av --delete memory/ site/memory/ || cp -a memory/. site/memory/
+          fi
+          echo "—— tree check (chron/2025/01) ——"
+          (ls -la site/memory/chron/2025/01 || true)
 
-          # (προαιρετικά) ανέβασε assets αν χρειάζονται
-          if [ -d assets ]; then rsync -av --delete ./assets/ "$SITE/assets/"; fi
-
-          # Απενεργοποίηση Jekyll
-          touch "$SITE/.nojekyll"
-
-          # Σιγουρευόμαστε ότι το κρίσιμο αρχείο υπάρχει ΠΡΙΝ το upload
-          test -f "$SITE/memory/chron/2025/01/index.html"
-
-          echo '--- TREE (πρώτα 4 επίπεδα) ---'
-          find "$SITE" -maxdepth 4 -type f | sort
-
-      - name: Upload artifact
+      - name: Upload artifact (site/)
         uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: site
 
   deploy:
-    name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
 
+      - name: Deploy stamp
+        run: |
+          ts="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "[${ts}] deploy done ✅"
+
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+
   smoke:
-    name: Post-deploy smoke-check (hard 200)
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for propagation
-        run: sleep 20
-
-      - name: Hit critical URLs
+      - name: Smoke-check endpoints
         env:
-          BASE: https://galanisstandards-christos.github.io/pwem-mirror
+          BASE: ${{ needs.deploy.outputs.page_url }}
+        shell: bash
         run: |
-          set -euo pipefail
+          set -e
+          ts() { date '+%Y-%m-%d %H:%M:%S %Z'; }
+          echo "[$(ts)] smoke-check start 🫧"
+
           urls=(
-            "$BASE/memory/chron/2025/01/index.html"
-            "$BASE/memory/heartbeat.json"
-            "$BASE/memory/status.json"
+            "${BASE}memory/ping.txt"
+            "${BASE}memory/heartbeat.json"
+            "${BASE}memory/status.json"
+            "${BASE}memory/chron/2025/01/index.html"
           )
-          for u in "${urls[@]}"; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$u")
-            echo "$code  $u"
-            [ "$code" -eq 200 ] || { echo "Smoke-check failed for $u"; exit 1; }
+
+          # small warmup loop for propagation (max ~2 min)
+          for i in {1..24}; do
+            ok=1
+            for u in "${urls[@]}"; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$u" || true)
+              if [ "$code" != "200" ]; then ok=0; fi
+            done
+            [ $ok -eq 1 ] && break
+            sleep 5
           done
+
+          fail=0
+          for u in "${urls[@]}"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$u" || true)
+            if [ "$code" = "200" ]; then
+              echo "✅ $u"
+            else
+              echo "❌ $u (HTTP $code)"
+              fail=1
+            fi
+          done
+          echo "[$(ts)] smoke-check end"
+          exit $fail
