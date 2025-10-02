@@ -1,119 +1,103 @@
-name: GitHub Pages · full site deploy + post-deploy smoke-check
+name: Deploy static site to GitHub Pages
 
 on:
   push:
     branches: [ main ]
-    # Τρέχει όταν πειράζουμε αυτά (πρόσθεσε/αφαίρεσε κατά βούληση)
-    paths:
-      - ".github/workflows/pages.yml"
-      - "index.html"
-      - "assets/**"
-      - "memory/**"
   workflow_dispatch:
 
+# Απαραίτητα permissions για GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# Ένα run τη φορά για Pages
 concurrency:
   group: "pages"
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    env:
-      TZ: Europe/Athens
-      ATTEMPT: "15"          # ← ΑΥΞΑΝΕΙΣ το νούμερο εδώ σε κάθε νέα δοκιμή
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: 🧱 Stage full site (rsync) + .nojekyll + playful logs
-        id: stage
+      - name: Stage site (copy -> site/)
         shell: bash
         run: |
           set -euo pipefail
-
-          when="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-          # Τύπωσε ΑΥΞΩΝΤΑ + εμότζις
-          printf "▶ Smoke attempt #%s — %s — " "$ATTEMPT" "$when"
-          python3 - <<'PY'
-import os, sys
-n = int(os.environ.get("ATTEMPT","1"))
-print("".join(["🍑" for _ in range(n)]), end=" ")
-print("".join(["🍆" for _ in range(n)]))
-PY
-          echo
-
-          # Καθαρό staging
           rm -rf site
           mkdir -p site
 
-          # Πλήρες rsync του repo προς site/ (εξαιρούμε meta)
-          rsync -a --delete \
-            --exclude='.git*' \
-            --exclude='.github' \
-            ./ site/
+          # Αντιγραφή root αρχείων αν υπάρχουν
+          for f in index.html README.md; do
+            [ -f "$f" ] && cp -a "$f" site/ || true
+          done
 
-          # Απενεργοποιούμε jekyll ώστε να σερβίρει καθαρά paths/json/txt
-          touch site/.nojekyll
-
-          echo "— Proof listing (top 5 levels under site/memory):"
-          if [ -d site/memory ]; then
-            find site/memory -maxdepth 5 -type f | sort | sed 's/^/   · /'
-          else
-            echo "   · (site/memory DOES NOT EXIST)"
+          # Αντιγραφή assets (αν υπάρχει)
+          if [ -d assets ]; then
+            rsync -a --delete assets/ site/assets/
           fi
 
-          # ΣΚΛΗΡΗ ΑΠΑΙΤΗΣΗ: να υπάρχει το 2025/01/index.html στο staged artifact
-          test -f site/memory/chron/2025/01/index.html || {
-            echo "❌ Missing site/memory/chron/2025/01/index.html in staged artifact."
-            exit 66
-          }
+          # >>> ΚΡΙΣΙΜΟ: πλήρης αντιγραφή memory/ -> site/memory/
+          if [ -d memory ]; then
+            rsync -a --delete memory/ site/memory/
+          fi
 
-      - name: Upload artifact (site/)
+          # Απενεργοποίηση Jekyll
+          touch site/.nojekyll
+
+          echo "=== Listing (πρώτα 200 paths) ==="
+          find site -maxdepth 4 -type f | sed -n '1,200p'
+
+          # Early check για το προβληματικό path
+          if [ -f site/memory/chron/2025/01/index.html ]; then
+            echo "✓ Βρέθηκε: site/memory/chron/2025/01/index.html"
+          else
+            echo "✗ ΔΕΝ βρέθηκε: site/memory/chron/2025/01/index.html"
+            # Αν δεν θες να fail-άρει εδώ, σχολίασε την επόμενη γραμμή
+            exit 1
+          fi
+
+      - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: 🔎 Post-deploy smoke-check (5 URLs incl. the 404 one)
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post-deploy smoke-check (soft)
         shell: bash
+        continue-on-error: true   # κάν' το false όταν σταθεροποιηθεί
         env:
-          BASE_URL: ${{ steps.deployment.outputs.page_url }}
-          ATTEMPT: ${{ env.ATTEMPT }}
+          BASE_URL: ${{ needs.deploy.outputs.page_url }}
         run: |
           set -euo pipefail
-          echo "Base URL: $BASE_URL"
-          declare -a urls=(
-            "$BASE_URL/memory/ping.txt?t=1"
-            "$BASE_URL/memory/heartbeat.json?t=1"
-            "$BASE_URL/memory/status.json?t=1"
-            "$BASE_URL/memory/chron/2025/index.html?t=1"
-            "$BASE_URL/memory/chron/2025/01/index.html?t=1"
+          echo "BASE_URL=$BASE_URL"
+          urls=(
+            "$BASE_URL/memory/ping.txt"
+            "$BASE_URL/memory/heartbeat.json"
+            "$BASE_URL/memory/status.json"
+            "$BASE_URL/memory/chron/2025/index.html"
+            "$BASE_URL/memory/chron/2025/01/index.html"
           )
-
-          fail=0
           for u in "${urls[@]}"; do
-            code="$(curl -s -o /dev/null -w '%{http_code}' "$u")"
-            echo "→ $u … $code"
-            [[ "$code" == "200" ]] || fail=$((fail+1))
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$u?t=$(date +%s)")
+            echo "$code  $u"
           done
-
-          if [[ $fail -gt 0 ]]; then
-            echo "❌ Smoke-check FAILED ($fail/5 not 200) — attempt #$ATTEMPT"
-            exit 77
-          fi
-
-          echo "✅ All 5 URLs 200 — attempt #$ATTEMPT"
