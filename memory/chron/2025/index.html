@@ -1,6 +1,44 @@
-<!DOCTYPE html><html><head><meta charset='utf-8'>
-<title>PWEM · 2025</title></head><body>
-<h1>PWEM · 2025</h1>
-<p>Μήνες:</p>
-<p><a href='https://galanisstandards-christos.github.io/pwem-mirror/memory/chron/2025/01/index.html'>https://galanisstandards-christos.github.io/pwem-mirror/memory/chron/2025/01/index.html</a></p>
-</body></html>
+<!doctype html>
+<html lang="el">
+<head>
+  <meta charset="utf-8" />
+  <title>PWEM · 2025</title>
+  <link rel="stylesheet" href="/pwem-mirror/assets/style.css">
+</head>
+<body>
+  <header><h1>PWEM · 2025</h1></header>
+  <main class="card">
+    <h2>Μήνες που υπάρχουν:</h2>
+    <ul id="months"></ul>
+  </main>
+
+  <script>
+  (function () {
+    const ul = document.getElementById('months');
+    const months = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
+    // π.χ. /pwem-mirror/memory/chron/2025
+    const base = location.pathname.replace(/\/index\.html?$/, '');
+
+    function addLink(url) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = url;
+      a.textContent = url;
+      li.appendChild(a);
+      ul.appendChild(li);
+    }
+
+    // Ελέγχουμε ποιοι μήνες έχουν index.html και τους εμφανίζουμε
+    months.forEach(async (m) => {
+      const url = `${base}/${m}/index.html`;
+      try {
+        const r = await fetch(url, { method: 'GET', cache: 'no-store' });
+        if (r.ok) addLink(url);
+      } catch (e) { /* ignore */ }
+    });
+  })();
+  </script>
+
+  <footer><p>Auto-generated view — δείχνει μόνο τους μήνες που υπάρχουν, ώστε να μην έχουμε 404.</p></footer>
+</body>
+</html>
