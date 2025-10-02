@@ -3,12 +3,6 @@ name: Deploy static site to Pages
 on:
   push:
     branches: [ main ]
-    paths:
-      - '.github/workflows/pages.yml'
-      - 'index.html'
-      - 'assets/**'
-      - 'memory/**'
-      - '.nojekyll'
   workflow_dispatch:
 
 permissions:
@@ -17,119 +11,103 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'github-pages'
+  group: "pages"
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build artifact
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Στήνουμε ΤΟ ΠΑΝΤΑ σε site/ για ανέβασμα στο Pages (memory + assets + .nojekyll)
-      - name: Stage site/ (memory + assets + .nojekyll)
-        run: |
-          set -euo pipefail
-          rm -rf site
-          mkdir -p site
-          # Πάρε ολόκληρο τον φάκελο memory/ (και τα chron/2025/01/index.html κτλ)
-          rsync -av --delete memory/ site/memory/
-          # Προαιρετικά assets/
-          if [ -d assets ]; then rsync -av --delete assets/ site/assets/; fi
-          # .nojekyll για να σερβίρεται Ο,ΤΙ ΥΠΑΡΧΕΙ όπως είναι
-          cp -f .nojekyll site/.nojekyll 2>/dev/null || true
-          echo "----- Listing (<=3 επίπεδα) -----"
-          find site -maxdepth 3 -type f | sort
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
 
-      - name: Upload artifact to Pages
+      - name: Stage site (copy .nojekyll, assets, FULL memory) 🍑
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf site && mkdir -p site
+
+          # 1) ρίζα: .nojekyll + index.html αν υπάρχει
+          if [ -f .nojekyll ]; then cp -a .nojekyll site/.nojekyll; else :; fi
+          if [ -f index.html ]; then cp -a index.html site/index.html; fi
+
+          # 2) assets (αν υπάρχουν)
+          if [ -d assets ]; then cp -a assets site/assets; fi
+
+          # 3) ΟΛΟ το memory/** με rsync (γρήγορο & αξιόπιστο)
+          if [ -d memory ]; then
+            rsync -a --delete memory/ site/memory/
+          fi
+
+          echo ""
+          echo "── Listing key files staged under site/ (για διάγνωση) ──"
+          # Δείξε index.html/ .json/ .txt μέχρι βάθος 5
+          find site/memory -maxdepth 5 -type f \( -name 'index.html' -o -name '*.json' -o -name '*.txt' \) | sort || true
+          echo "──────────────────────────────────────────────────────"
+
+      - name: Upload artifact (site/)
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
   deploy:
-    name: Deploy to GitHub Pages
-    runs-on: ubuntu-latest
     needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    outputs:
-      page_url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
     steps:
-      - name: Deploy
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-  smoke:
-    name: Smoke-check after deploy (multi URL)
-    runs-on: ubuntu-latest
-    needs: deploy
-    env:
-      BASE_URL: ${{ needs.deploy.outputs.page_url }}
-    steps:
-      - name: Poll URLs until 200 (+optional body match)
+      - name: Smoke-check (ping/heartbeat/status/chron) with retries
         shell: bash
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
+          attempt="#11"
+          when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "🍑 Smoke attempt ${attempt} — ${when}"
 
-          base="${BASE_URL%/}/"   # εξομάλυνση
-
-          # helper: επαναλαμβάνει 🍑 όσες φορές πεις (για κέφι στα logs)
-          peaches() { n=${1:-1}; for i in $(seq 1 "$n"); do printf '🍑'; done; }
-
-          # helper: poll με retries (40 x 3s ~ 2 λεπτά)
+          http_code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
           poll() {
-            local url="$1"
-            local expect="${2-}"  # προαιρετικό substring στο body
-
+            local url="$1"; local expect="${2-}"
             for i in $(seq 1 40); do
-              when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-              echo "::group::Attempt #$i — $when $(peaches "$i")"
-              code="$(curl -s -o /dev/null -w "%{http_code}" "$url")"
+              code="$(http_code "$url")"
               body=""
-              if [ -n "$expect" ]; then
-                body="$(curl -s "$url" || true)"
-              fi
-
-              if [ "$code" = "200" ] && { [ -z "$expect" ] || [[ "$body" == *"$expect"* ]]; }; then
-                echo "✅ 200 OK — $url"
-                echo "::endgroup::"
+              if [[ -n "$expect" ]]; then body="$(curl -s "$url" || true)"; fi
+              if [[ "$code" == "200" && ( -z "$expect" || "$body" == *"$expect"* ) ]]; then
+                echo "✅ 200 OK  $url"
                 return 0
               fi
-
-              echo "⏳ code=$code (need 200) expect='${expect}'"
-              echo "::endgroup::"
+              echo "⏳ try $i: code=$code — $url"
               sleep 3
             done
-
-            echo "❌ FAIL — $url"
+            echo "❌ FAIL $url"
             return 1
           }
 
-          # URLs προς έλεγχο (rel|optional-expected-substring)
-          checks=(
-            "memory/ping.txt|ok"
-            "memory/heartbeat.json|\"ok\": true"
-            "memory/status.json|\"ok\": true"
-            "memory/chron/2025/index.html|"
-            "memory/chron/2025/01/index.html|"
-          )
+          base="${BASE_URL}"
+          ts="$(date +%s)"
 
-          failed=0
-          for item in "${checks[@]}"; do
-            rel="${item%%|*}"
-            exp="${item#*|}"
-            url="${base}${rel}"
-            if ! poll "$url" "$exp"; then
-              failed=1
-            fi
-          done
+          # γρήγορα health URLs
+          poll "$base/memory/ping.txt?t=$ts"           "ok"
+          poll "$base/memory/heartbeat.json?t=$ts"     '"ok": true'
+          poll "$base/memory/status.json?t=$ts"        '"ok": true'
 
-          if [ "$failed" -ne 0 ]; then
-            echo "🧯 Smoke-check failed"
-            exit 1
-          fi
+          # chron index + συγκεκριμένος μήνας
+          poll "$base/memory/chron/2025/index.html?t=$ts"
+          poll "$base/memory/chron/2025/01/index.html?t=$ts"
 
-          echo "🟢 Smoke-check passed"
+          echo "🎉 Smoke-check passed"
