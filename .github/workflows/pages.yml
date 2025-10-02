@@ -1,8 +1,14 @@
-name: Pages
+name: GitHub Pages · full site deploy + post-deploy smoke-check
 
 on:
   push:
     branches: [ main ]
+    # Τρέχει όταν πειράζουμε αυτά (πρόσθεσε/αφαίρεσε κατά βούληση)
+    paths:
+      - ".github/workflows/pages.yml"
+      - "index.html"
+      - "assets/**"
+      - "memory/**"
   workflow_dispatch:
 
 permissions:
@@ -11,84 +17,103 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages-${{ github.ref }}"
-  cancel-in-progress: false
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build & stage site
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      TZ: Europe/Athens
+      ATTEMPT: "15"          # ← ΑΥΞΑΝΕΙΣ το νούμερο εδώ σε κάθε νέα δοκιμή
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Stage static site to ./site (FULL)
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: 🧱 Stage full site (rsync) + .nojekyll + playful logs
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
+
+          when="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          # Τύπωσε ΑΥΞΩΝΤΑ + εμότζις
+          printf "▶ Smoke attempt #%s — %s — " "$ATTEMPT" "$when"
+          python3 - <<'PY'
+import os, sys
+n = int(os.environ.get("ATTEMPT","1"))
+print("".join(["🍑" for _ in range(n)]), end=" ")
+print("".join(["🍆" for _ in range(n)]))
+PY
+          echo
+
+          # Καθαρό staging
+          rm -rf site
           mkdir -p site
 
-          # Σημαντικό: οι τελείες / trailing slashes για σωστό rsync
-          rsync -av --delete \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude ".gitignore" \
-            --exclude "scripts/" \
+          # Πλήρες rsync του repo προς site/ (εξαιρούμε meta)
+          rsync -a --delete \
+            --exclude='.git*' \
+            --exclude='.github' \
             ./ site/
 
-          # Εξασφάλιση no-jekyll
+          # Απενεργοποιούμε jekyll ώστε να σερβίρει καθαρά paths/json/txt
           touch site/.nojekyll
 
-          echo "---- TREE: site/memory/chron/2025 ----"
-          ls -la site/memory/chron/2025 || true
-          echo "---- TREE: site/memory/chron/2025/01 ----"
-          ls -la site/memory/chron/2025/01 || true
-
-          # Fail νωρίς αν λείπει το index του μήνα
-          if [[ ! -f site/memory/chron/2025/01/index.html ]]; then
-            echo "❌ Λείπει: site/memory/chron/2025/01/index.html"
-            exit 2
+          echo "— Proof listing (top 5 levels under site/memory):"
+          if [ -d site/memory ]; then
+            find site/memory -maxdepth 5 -type f | sort | sed 's/^/   · /'
+          else
+            echo "   · (site/memory DOES NOT EXIST)"
           fi
 
-      - name: Upload Pages artifact
+          # ΣΚΛΗΡΗ ΑΠΑΙΤΗΣΗ: να υπάρχει το 2025/01/index.html στο staged artifact
+          test -f site/memory/chron/2025/01/index.html || {
+            echo "❌ Missing site/memory/chron/2025/01/index.html in staged artifact."
+            exit 66
+          }
+
+      - name: Upload artifact (site/)
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-  deploy:
-    name: Deploy to GitHub Pages + smoke-check
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deploy
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Smoke-check 🍑
+      - name: 🔎 Post-deploy smoke-check (5 URLs incl. the 404 one)
         shell: bash
         env:
-          BASE_URL: ${{ steps.deploy.outputs.page_url }}
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          ATTEMPT: ${{ env.ATTEMPT }}
         run: |
           set -euo pipefail
-          attempt="#13"
-          when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo "🍑 Smoke attempt ${attempt} @ ${when}"
-          urls=(
-            "$BASE_URL/memory/ping.txt"
-            "$BASE_URL/memory/heartbeat.json"
-            "$BASE_URL/memory/status.json"
-            "$BASE_URL/memory/chron/2025/01/index.html"
+          echo "Base URL: $BASE_URL"
+          declare -a urls=(
+            "$BASE_URL/memory/ping.txt?t=1"
+            "$BASE_URL/memory/heartbeat.json?t=1"
+            "$BASE_URL/memory/status.json?t=1"
+            "$BASE_URL/memory/chron/2025/index.html?t=1"
+            "$BASE_URL/memory/chron/2025/01/index.html?t=1"
           )
+
+          fail=0
           for u in "${urls[@]}"; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$u")
-            echo "→ $u — $code"
-            if [[ "$u" == *"/2025/01/index.html" ]] && [[ "$code" != "200" ]]; then
-              echo "❌ Month index missing (404)"; exit 1
-            fi
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$u")"
+            echo "→ $u … $code"
+            [[ "$code" == "200" ]] || fail=$((fail+1))
           done
-          echo "✅ OK — όλα live"
+
+          if [[ $fail -gt 0 ]]; then
+            echo "❌ Smoke-check FAILED ($fail/5 not 200) — attempt #$ATTEMPT"
+            exit 77
+          fi
+
+          echo "✅ All 5 URLs 200 — attempt #$ATTEMPT"
