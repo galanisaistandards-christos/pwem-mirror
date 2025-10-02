@@ -1,8 +1,10 @@
 name: Deploy static site to Pages
 
 on:
+  # Να κάνουμε deploy και αυτόματα σε κάθε push στο main
   push:
-    branches: [ "main" ]
+    branches: [ main ]
+  # αλλά και χειροκίνητα όποτε θέλεις
   workflow_dispatch:
 
 permissions:
@@ -12,56 +14,51 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      # Ανεβάζουμε ΟΛΟ το repo σαν artifact (σερβίρεται ως static)
-      - name: Upload full repo to GitHub Pages (artifact path ".")
+      - name: Upload full repo as Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: .
 
-  deploy:
-    name: Deploy + Smoke-check
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
       # -------------------------------
-      # 🔥 Smoke-check μετά το deploy
+      # Smoke-check μετά το deploy
       # -------------------------------
-      - name: Smoke-check (multi URL: ping(s) + index) 🧐
+      - name: Smoke-check (multi URL: ping(s) + heartbeat + status + index)
         shell: bash
         env:
           BASE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
 
-          # Εκτυπώνουμε «σκυτάλη»: attempt, ώρα, emojis
-          attempt="#06"   # <— ΑΥΞΑΝΕΙΣ σε κάθε αλλαγή (για ορατή ιχνηλάτηση) 
+          attempt="${GITHUB_RUN_NUMBER:-N/A}"
           when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo "🚀 Smoke attempt ${attempt} @ ${when}"
 
-          # Μικρό helper: GET μόνο status code
+          # λίγη χαρά 🎉
+          n=$(( ${GITHUB_RUN_NUMBER:-1} % 10 )); [ "$n" -eq 0 ] && n=10
+          peaches=$(printf '🍑%.0s' $(seq 1 "$n"))
+
+          echo "🔎 Smoke attempt #${attempt} @ ${when} — ${peaches}"
+
+          # helper: μόνο status code
           http_code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
 
-          # poll με retries (40 x 3s ≈ 2 λεπτά)
+          # helper: poll με 40 retries (≈2')
           poll() {
             local url="$1"
             local expect="${2:-}"
@@ -84,34 +81,30 @@ jobs:
             return 1
           }
 
-          # 🍑 Δυναμικά ροδακινάκια = αριθμός προσπάθειας (strip το #)
-          repeat_peaches(){ n="$1"; out=""; for _ in $(seq 1 "$n"); do out="$out🍑"; done; printf '%s' "$out"; }
-          att_no="${attempt#\#}"
-          echo "🍑 $(repeat_peaches "$att_no")"
+          base="${BASE_URL%/}"
 
-          # URLs & (προαιρετικό) expected body substring
-          checks=(
-            "memory/chron/2025/ping.txt|ok"
-            "memory/ping.txt|ok"
-            "memory/heartbeat.json|\"ok\""  # περιέχει "ok"
-            "memory/status.json|\"ok\""     # περιέχει "ok"
-            "memory/chron/2025/index.html|"
-            "index.html|"
+          # Τι ελέγχουμε
+          checks=$(
+            cat <<'EOF'
+/memory/ping.txt|ok
+/memory/heartbeat.json|"ok": true
+/memory/status.json|"ok": true
+/memory/chron/2025/index.html|PWEM
+/memory/chron/2025/01/index.html|
+EOF
           )
 
           failed=0
-          for item in "${checks[@]}"; do
-            rel="${item%%|*}"
-            exp="${item#*|}"
-            url="${BASE_URL%/}/$rel"
-            if ! poll "$url" "$exp"; then
+          while IFS='|' read -r rel expect; do
+            [ -z "$rel" ] && continue
+            url="$base$rel"
+            if ! poll "$url" "$expect"; then
               failed=1
             fi
-          done
+          done <<<"$checks"
 
           if [[ "$failed" -ne 0 ]]; then
-            echo "💥 Smoke-check failed"
-            exit 1
+            echo "💥 Smoke-check failed"; exit 1
           else
-            echo "🎉 Smoke-check passed"
+            echo "🟢 Smoke-check passed"
           fi
