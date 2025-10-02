@@ -1,4 +1,4 @@
-name: GitHub Pages — build & deploy PWEM site
+name: GitHub Pages — PWEM
 
 on:
   push:
@@ -11,50 +11,37 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build static site artifact
+    name: Build static site
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Stage site/
-        shell: bash
+      - name: Prepare site/
         run: |
-          set -euxo pipefail
-
-          # καθαρό staging
-          rm -rf site
+          set -euo pipefail
           mkdir -p site
-
-          # βάλ’ το .nojekyll στη ρίζα του artifact
+          # Disable Jekyll so σερβίρονται όλα όπως είναι
           touch site/.nojekyll
 
-          # αντιγραφή ΟΛΟΥ του memory/ ΜΕΣΑ σε site/memory/ (preserve tree)
-          # --delete για συγχρονισμό, --prune-empty-dirs για καθαρά dirs
-          rsync -a --delete --prune-empty-dirs \
-            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
-            memory/ site/memory/
+          # Αντιγραφή ΟΛΗΣ της μνήμης στο site/ (αναδρομικά)
+          rsync -av --delete memory/ site/memory/
 
-          # (προαιρετικά) αν έχεις και assets:
-          if [ -d assets ]; then
-            rsync -a assets/ site/assets/
+          echo "=== Sanity list ==="
+          ls -lah site/memory/chron/2025/01/ || true
+
+          # Σκληρός έλεγχος: αν λείπει, σταμάτα εδώ
+          if [ ! -f site/memory/chron/2025/01/index.html ]; then
+            echo "FATAL: site/memory/chron/2025/01/index.html is missing in the artifact!"
+            exit 1
           fi
 
-          echo "── Staged listing (depth≤3) ──"
-          find site -maxdepth 3 -type f | sort
-
-          # sanity checks πριν το upload
-          test -f site/memory/ping.txt
-          test -f site/memory/heartbeat.json
-          test -f site/memory/status.json
-          test -f site/memory/chron/2025/01/index.html
-
-      - name: Upload Pages artifact
+      - name: Upload artifact (site/)
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -63,24 +50,23 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     outputs:
-      page_url: ${{ steps.deploy.outputs.page_url }}
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deploy
+      - name: Deploy
+        id: deployment
         uses: actions/deploy-pages@v4
 
   smoke:
-    name: Post-deploy smoke-check (4 URLs)
+    name: Post-deploy smoke-check
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Curl 4 endpoints
+      - name: Wait for CDN to settle
+        run: sleep 20
+      - name: Hit critical URLs
         env:
           BASE: ${{ needs.deploy.outputs.page_url }}
-        shell: bash
         run: |
           set -euo pipefail
           base="${BASE%/}"
@@ -88,18 +74,13 @@ jobs:
             "$base/memory/ping.txt"
             "$base/memory/heartbeat.json"
             "$base/memory/status.json"
+            "$base/memory/chron/2025/index.html"
             "$base/memory/chron/2025/01/index.html"
           )
-
-          echo "Smoke @ $(date -u +'%Y-%m-%d %H:%M:%S UTC') — ${#urls[@]} checks 🍑"
           fail=0
           for u in "${urls[@]}"; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$u")
-            if [ "$code" = "200" ]; then
-              echo "✅ 200  $u"
-            else
-              echo "❌ $code $u"
-              fail=1
-            fi
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$u")
+            echo "$code  $u"
+            if [ "$code" != "200" ]; then fail=1; fi
           done
           exit $fail
