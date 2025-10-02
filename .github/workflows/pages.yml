@@ -24,16 +24,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      # 🔴 για να είμαστε σίγουροι ότι ανεβαίνει ο φάκελος memory
-      # (ξεκινάμε με στοχευμένο subset για έλεγχο)
-      - name: Upload site artifact
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # ανεβάζουμε ΟΛΟ το repo στο Pages artifact
+      - name: Upload site artifact (entire repo)
         uses: actions/upload-pages-artifact@v3
         with:
-          path: |
-            index.html
-            assets
-            memory/chron/2025
+          path: .
 
       - name: Deploy to GitHub Pages
         id: deployment
