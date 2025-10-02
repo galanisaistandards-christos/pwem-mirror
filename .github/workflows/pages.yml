@@ -30,7 +30,6 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      # ανεβάζουμε ΟΛΟ το repo στο Pages artifact
       - name: Upload site artifact (entire repo)
         uses: actions/upload-pages-artifact@v3
         with:
@@ -39,3 +38,25 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Smoke-check ping.txt is served (200 & body 'ok')
+        shell: bash
+        env:
+          PING_PATH: memory/chron/2025/ping.txt
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -e
+          base="${BASE_URL%/}"
+          url="$base/$PING_PATH?ts=$(date +%s)"
+          echo "Polling: $url"
+          for i in {1..40}; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
+            body=$(curl -s "$url" || true)
+            if [ "$code" = "200" ] && [ "$body" = "ok" ]; then
+              echo "✅ Served OK"
+              exit 0
+            fi
+            echo "Attempt $i: code=$code body='$body' — retrying..."
+            sleep 3
+          done
+          echo "❌ Smoke-check failed"; exit 1
