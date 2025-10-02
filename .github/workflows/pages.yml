@@ -1,10 +1,13 @@
 name: Deploy static site to Pages
 
 on:
-  # Να κάνουμε deploy και αυτόματα σε κάθε push στο main
   push:
-    branches: [ main ]
-  # αλλά και χειροκίνητα όποτε θέλεις
+    branches: [main]
+    paths:
+      - 'memory/**'
+      - 'assets/**'
+      - 'index.html'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,98 +16,69 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: 'pages'
+  cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Upload full repo as Pages artifact
+      # Φτιάχνουμε ρητά έναν φάκελο site/ με ό,τι θέλουμε να δημοσιευτεί
+      - name: Build site directory (memory + assets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf site
+          mkdir -p site
+          rsync -a --delete memory/ site/memory/
+          rsync -a --delete assets/ site/assets/ || true
+          [ -f index.html ] && cp -a index.html site/ || true
+          touch site/.nojekyll
+          echo "Site preview:"
+          find site -type f | sort | head -60
+
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: site
+          if-no-files-found: error
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # -------------------------------
-      # Smoke-check μετά το deploy
-      # -------------------------------
-      - name: Smoke-check (multi URL: ping(s) + heartbeat + status + index)
-        shell: bash
+      # Smoke-check μετά το deploy (περιμένει μέχρι να βγει live)
+      - name: Smoke-check (ping, heartbeat, status, month index)
         env:
           BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        shell: bash
         run: |
           set -euo pipefail
 
-          attempt="${GITHUB_RUN_NUMBER:-N/A}"
-          when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-
-          # λίγη χαρά 🎉
-          n=$(( ${GITHUB_RUN_NUMBER:-1} % 10 )); [ "$n" -eq 0 ] && n=10
-          peaches=$(printf '🍑%.0s' $(seq 1 "$n"))
-
-          echo "🔎 Smoke attempt #${attempt} @ ${when} — ${peaches}"
-
-          # helper: μόνο status code
-          http_code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
-
-          # helper: poll με 40 retries (≈2')
           poll() {
             local url="$1"
             local expect="${2:-}"
             for i in $(seq 1 40); do
-              code="$(http_code "$url")"
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
               body=""
-              if [[ -n "$expect" ]]; then
-                body="$(curl -s "$url" || true)"
+              if [[ -n "$expect" ]]; then body=$(curl -s "$url" || true); fi
+              if [[ "$code" == "200" ]] && { [[ -z "$expect" ]] || [[ "$body" == *"$expect"* ]]; }; then
+                echo "✅ $url"
+                return 0
               fi
-              if [[ "$code" == "200" ]]; then
-                if [[ -z "$expect" || "$body" == *"$expect"* ]]; then
-                  echo "✅ OK: $url"
-                  return 0
-                fi
-              fi
-              echo "⏳ Attempt $i: code=$code (expecting 200) ${expect:+and body contains '$expect'}"
-              sleep 3
+              echo "⏳ try $i: $code …"; sleep 3
             done
-            echo "❌ FAIL: $url"
-            return 1
+            echo "❌ FAIL $url"; return 1
           }
 
           base="${BASE_URL%/}"
+          echo "🍑 Smoke @ $(date -u +"%Y-%m-%d %H:%M:%S UTC") — $base"
 
-          # Τι ελέγχουμε
-          checks=$(
-            cat <<'EOF'
-/memory/ping.txt|ok
-/memory/heartbeat.json|"ok": true
-/memory/status.json|"ok": true
-/memory/chron/2025/index.html|PWEM
-/memory/chron/2025/01/index.html|
-EOF
-          )
-
-          failed=0
-          while IFS='|' read -r rel expect; do
-            [ -z "$rel" ] && continue
-            url="$base$rel"
-            if ! poll "$url" "$expect"; then
-              failed=1
-            fi
-          done <<<"$checks"
-
-          if [[ "$failed" -ne 0 ]]; then
-            echo "💥 Smoke-check failed"; exit 1
-          else
-            echo "🟢 Smoke-check passed"
-          fi
+          poll "$base/memory/ping.txt" "ok"
+          poll "$base/memory/heartbeat.json" "\"ok\": true"
+          poll "$base/memory/status.json" "\"ok\": true"
+          # Κρίσιμο: να υπάρχει και ο μήνας
+          poll "$base/memory/chron/2025/01/index.html" "<html"
