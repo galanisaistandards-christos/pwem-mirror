@@ -2,12 +2,13 @@ name: Deploy static site to Pages
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
     paths:
-      - 'memory/**'
-      - 'assets/**'
-      - 'index.html'
       - '.github/workflows/pages.yml'
+      - 'index.html'
+      - 'assets/**'
+      - 'memory/**'
+      - '.nojekyll'
   workflow_dispatch:
 
 permissions:
@@ -16,69 +17,119 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: 'github-pages'
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build artifact
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Φτιάχνουμε ρητά έναν φάκελο site/ με ό,τι θέλουμε να δημοσιευτεί
-      - name: Build site directory (memory + assets)
-        shell: bash
+      # Στήνουμε ΤΟ ΠΑΝΤΑ σε site/ για ανέβασμα στο Pages (memory + assets + .nojekyll)
+      - name: Stage site/ (memory + assets + .nojekyll)
         run: |
           set -euo pipefail
           rm -rf site
           mkdir -p site
-          rsync -a --delete memory/ site/memory/
-          rsync -a --delete assets/ site/assets/ || true
-          [ -f index.html ] && cp -a index.html site/ || true
-          touch site/.nojekyll
-          echo "Site preview:"
-          find site -type f | sort | head -60
+          # Πάρε ολόκληρο τον φάκελο memory/ (και τα chron/2025/01/index.html κτλ)
+          rsync -av --delete memory/ site/memory/
+          # Προαιρετικά assets/
+          if [ -d assets ]; then rsync -av --delete assets/ site/assets/; fi
+          # .nojekyll για να σερβίρεται Ο,ΤΙ ΥΠΑΡΧΕΙ όπως είναι
+          cp -f .nojekyll site/.nojekyll 2>/dev/null || true
+          echo "----- Listing (<=3 επίπεδα) -----"
+          find site -maxdepth 3 -type f | sort
 
-      - name: Upload artifact
+      - name: Upload artifact to Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
-          if-no-files-found: error
 
-      - name: Deploy to GitHub Pages
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # Smoke-check μετά το deploy (περιμένει μέχρι να βγει live)
-      - name: Smoke-check (ping, heartbeat, status, month index)
-        env:
-          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+  smoke:
+    name: Smoke-check after deploy (multi URL)
+    runs-on: ubuntu-latest
+    needs: deploy
+    env:
+      BASE_URL: ${{ needs.deploy.outputs.page_url }}
+    steps:
+      - name: Poll URLs until 200 (+optional body match)
         shell: bash
         run: |
           set -euo pipefail
 
+          base="${BASE_URL%/}/"   # εξομάλυνση
+
+          # helper: επαναλαμβάνει 🍑 όσες φορές πεις (για κέφι στα logs)
+          peaches() { n=${1:-1}; for i in $(seq 1 "$n"); do printf '🍑'; done; }
+
+          # helper: poll με retries (40 x 3s ~ 2 λεπτά)
           poll() {
             local url="$1"
-            local expect="${2:-}"
+            local expect="${2-}"  # προαιρετικό substring στο body
+
             for i in $(seq 1 40); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+              when="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+              echo "::group::Attempt #$i — $when $(peaches "$i")"
+              code="$(curl -s -o /dev/null -w "%{http_code}" "$url")"
               body=""
-              if [[ -n "$expect" ]]; then body=$(curl -s "$url" || true); fi
-              if [[ "$code" == "200" ]] && { [[ -z "$expect" ]] || [[ "$body" == *"$expect"* ]]; }; then
-                echo "✅ $url"
+              if [ -n "$expect" ]; then
+                body="$(curl -s "$url" || true)"
+              fi
+
+              if [ "$code" = "200" ] && { [ -z "$expect" ] || [[ "$body" == *"$expect"* ]]; }; then
+                echo "✅ 200 OK — $url"
+                echo "::endgroup::"
                 return 0
               fi
-              echo "⏳ try $i: $code …"; sleep 3
+
+              echo "⏳ code=$code (need 200) expect='${expect}'"
+              echo "::endgroup::"
+              sleep 3
             done
-            echo "❌ FAIL $url"; return 1
+
+            echo "❌ FAIL — $url"
+            return 1
           }
 
-          base="${BASE_URL%/}"
-          echo "🍑 Smoke @ $(date -u +"%Y-%m-%d %H:%M:%S UTC") — $base"
+          # URLs προς έλεγχο (rel|optional-expected-substring)
+          checks=(
+            "memory/ping.txt|ok"
+            "memory/heartbeat.json|\"ok\": true"
+            "memory/status.json|\"ok\": true"
+            "memory/chron/2025/index.html|"
+            "memory/chron/2025/01/index.html|"
+          )
 
-          poll "$base/memory/ping.txt" "ok"
-          poll "$base/memory/heartbeat.json" "\"ok\": true"
-          poll "$base/memory/status.json" "\"ok\": true"
-          # Κρίσιμο: να υπάρχει και ο μήνας
-          poll "$base/memory/chron/2025/01/index.html" "<html"
+          failed=0
+          for item in "${checks[@]}"; do
+            rel="${item%%|*}"
+            exp="${item#*|}"
+            url="${base}${rel}"
+            if ! poll "$url" "$exp"; then
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "🧯 Smoke-check failed"
+            exit 1
+          fi
+
+          echo "🟢 Smoke-check passed"
