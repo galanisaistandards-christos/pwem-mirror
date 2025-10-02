@@ -30,6 +30,7 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      # Ανεβάζουμε ΟΛΟ το repo ως artifact (ώστε να σερβίρεται όλο το /memory/**)
       - name: Upload site artifact (entire repo)
         uses: actions/upload-pages-artifact@v3
         with:
@@ -39,24 +40,63 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Smoke-check ping.txt is served (200 & body 'ok')
+      # Smoke-check: ελέγχουμε 3-4 κρίσιμα URLs με retry
+      - name: Smoke-check key URLs (200 + αναμενόμενο body όπου χρειάζεται)
         shell: bash
         env:
-          PING_PATH: memory/chron/2025/ping.txt
           BASE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          set -e
+          set -euo pipefail
+
           base="${BASE_URL%/}"
-          url="$base/$PING_PATH?ts=$(date +%s)"
-          echo "Polling: $url"
-          for i in {1..40}; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
-            body=$(curl -s "$url" || true)
-            if [ "$code" = "200" ] && [ "$body" = "ok" ]; then
-              echo "✅ Served OK"
-              exit 0
+          echo "Base URL: $base"
+
+          # Λίστα ελέγχων: "relative_path|||optional_expected_substring"
+          checks=(
+            "memory/chron/2025/ping.txt|||ok"
+            "memory/chron/2025/index.html|||"
+            "memory/chron/2025/01/index.html|||"
+            "memory/chron/2025/08/index.html|||"
+          )
+
+          # poll με retries (40 x 3s ≈ 2 λεπτά)
+          poll() {
+            local url="$1"
+            local expect="${2:-}"
+            for i in $(seq 1 40); do
+              # Παίρνουμε status code
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+              # Και αν χρειάζεται και το body
+              body=""
+              if [[ -n "$expect" ]]; then
+                body=$(curl -s "$url" || true)
+              fi
+
+              if [[ "$code" == "200" ]]; then
+                if [[ -z "$expect" || "$body" == *"$expect"* ]]; then
+                  echo "✅ OK: $url"
+                  return 0
+                fi
+              fi
+              echo "⏳ Attempt $i: code=$code (expecting 200) ${expect:+and body contains '$expect'}"
+              sleep 3
+            done
+            echo "❌ FAIL: $url"
+            return 1
+          }
+
+          failed=0
+          for item in "${checks[@]}"; do
+            rel="${item%%|||*}"
+            exp="${item#*|||}"
+            url="$base/$rel"
+            if ! poll "$url" "$exp"; then
+              failed=1
             fi
-            echo "Attempt $i: code=$code body='$body' — retrying..."
-            sleep 3
           done
-          echo "❌ Smoke-check failed"; exit 1
+
+          if [[ "$failed" -ne 0 ]]; then
+            echo "❌ Smoke-check failed"; exit 1
+          else
+            echo "🎉 Smoke-check passed"
+          fi
