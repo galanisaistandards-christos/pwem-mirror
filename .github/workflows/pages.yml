@@ -2,13 +2,7 @@ name: Deploy static site to Pages
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - ".github/workflows/pages.yml"
-      - "memory/**"
-      - "assets/**"
-      - "index.html"
-      - ".nojekyll"
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -18,94 +12,124 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build artifact
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
-      - name: Check out repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
 
-      - name: Stage static site (copy everything we need)
+      # ---------- STAGE SITE ----------
+      - name: Stage site (full copy + .nojekyll)
+        id: stage
+        shell: bash
         run: |
-          set -euxo pipefail
-          rm -rf site
-          mkdir -p site
+          set -euo pipefail
+          site="site"
+          rm -rf "$site"
+          mkdir -p "$site"
 
-          # 1) Ρίζα index αν υπάρχει
-          if [ -f index.html ]; then cp -a index.html site/; fi
+          # index & assets (αν υπάρχουν)
+          if [[ -f "index.html" ]]; then
+            cp -a index.html "$site/"
+          fi
+          if [[ -d assets ]]; then
+            mkdir -p "$site/assets"
+            cp -a assets/. "$site/assets/"
+          fi
 
-          # 2) Όλα τα assets (αν υπάρχουν)
-          if [ -d assets ]; then cp -a assets site/; fi
+          # === Η ΔΙΟΡΘΩΣΗ: ΑΝΑΔΡΟΜΙΚΗ ΑΝΤΙΓΡΑΦΗ ΟΛΟΥ ΤΟΥ memory/ ===
+          # ΜΗΝ χρησιμοποιήσεις 'memory/**' (δεν είναι recursive χωρίς globstar).
+          if [[ -d memory ]]; then
+            mkdir -p "$site/memory"
+            cp -a memory/. "$site/memory/"
+          fi
 
-          # 3) ΟΛΟΣ ο φάκελος memory, με πλήρη δενδροειδή δομή
-          if [ -d memory ]; then cp -a memory site/; fi
+          # Απενεργοποιεί Jekyll processing
+          touch "$site/.nojekyll"
 
-          # 4) Απενεργοποιούμε Jekyll processing
-          # (ΠΡΕΠΕΙ να είναι στη ρίζα του site artifact)
-          : > site/.nojekyll
+          echo "📦 Staged site to '$site'"
 
-      - name: List site (debug)
-        run: |
-          echo "=== Files staged to site/ ==="
-          find site -type f | sort | sed -n '1,400p'
-
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    outputs:
-      page_url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-  smoke:
-    name: Smoke-check deployed URLs
-    needs: deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Poll a few critical URLs
+      # ---------- SMOKE CHECK ----------
+      - name: Smoke-check (multi URL)
+        shell: bash
         env:
-          BASE_URL: ${{ needs.deploy.outputs.page_url }}
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          ATTEMPT: ${{ github.run_number }}
         run: |
-          set -euxo pipefail
-          base="${BASE_URL%/}"
+          set -euo pipefail
 
-          urls=(
-            "$base/memory/ping.txt"
-            "$base/memory/heartbeat.json"
-            "$base/memory/status.json"
-            "$base/memory/chron/2025/index.html"
-            "$base/memory/chron/2025/01/index.html"
-          )
+          when="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
-          for u in "${urls[@]}"; do
-            echo "→ Checking: $u"
-            # 40 retries x 3s ~ 2'
-            ok=0
-            for i in $(seq 1 40); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" "$u?t=$RANDOM")
-              if [ "$code" = "200" ]; then ok=1; break; fi
+          # Δυναμικά παιχνιδιάρικα emoji: τόσα 🍑 όσα το attempt
+          peachs=$(printf '🍑%.0s' $(seq 1 "$ATTEMPT"))
+
+          echo "🌀 Smoke attempt #${ATTEMPT} — ${when} ${peachs}"
+
+          http_code() { curl -sS -o /dev/null -w "%{http_code}" "$1"; }
+          body_of()  { curl -sS "$1" || true; }
+
+          poll() {
+            local url="$1"
+            local expect="${2-}"       # optional substring που πρέπει να υπάρχει στο body
+
+            for i in $(seq 1 40); do   # ~2 λεπτά
+              code="$(http_code "$url")"
+              if [[ "$code" == "200" ]]; then
+                if [[ -z "$expect" ]] || body="$(body_of "$url")" && [[ "$body" == *"$expect"* ]]; then
+                  echo "✅ OK: $url"
+                  return 0
+                fi
+              fi
+              echo "⏳ try $i: code=$code (want 200)${expect:+; expect body contains '$expect'}"
               sleep 3
             done
-            if [ $ok -ne 1 ]; then
-              echo "✗ FAIL: $u"
-              exit 1
-            else
-              echo "✓ OK: $u"
+
+            echo "❌ FAIL: $url"
+            return 1
+          }
+
+          base="${BASE_URL%/}"
+
+          # URLs που ελέγχουμε
+          declare -a checks=(
+            "Ping|ok|$base/memory/ping.txt"
+            "Heartbeat|\"ok\": true|$base/memory/heartbeat.json"
+            "Status|\"ok\": true|$base/memory/status.json"
+            "Chron-2025 index|PWEM|$base/memory/chron/2025/index.html"
+            "Chron-2025-01 index|PWEM|$base/memory/chron/2025/01/index.html"
+          )
+
+          failed=0
+          for row in "${checks[@]}"; do
+            IFS='|' read -r rel expect url <<<"$row"
+            echo "🔎 $rel → $url"
+            if ! poll "$url" "$expect"; then
+              failed=1
             fi
           done
 
-          echo "🎉 Smoke-check passed."
+          if [[ "$failed" -ne 0 ]]; then
+            echo "💥 Smoke-check failed"
+            exit 1
+          else
+            echo "🎉 Smoke-check passed"
+          fi
