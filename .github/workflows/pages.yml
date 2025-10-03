@@ -20,6 +20,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,18 +28,39 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Build
+      - name: Build site folder
+        shell: bash
         run: |
+          set -euo pipefail
+          rm -rf site
           mkdir -p site
+
+          # αντιγραφή των public αρχείων
           cp index.html site/
           cp -r memory site/
-          [ -d assets ] && cp -r assets site/ || true
+
+          # προαιρετικά assets (αν δεν υπάρχει, μην αποτύχει)
+          if [ -d assets ]; then
+            cp -r assets site/
+          fi
+
+          # απενεργοποιεί Jekyll για να σερβίρει /memory/** όπως είναι
           touch site/.nojekyll
+
+          echo "::group::SITE TREE"
+          find site -maxdepth 4 -type f -print | sed 's/^/ - /'
+          echo "::endgroup::"
+
+      - name: Sanity checks (fail early if missing)
+        shell: bash
+        run: |
+          test -f site/index.html || (echo "Missing site/index.html" && exit 1)
+          test -f site/memory/chron/2025/01/index.html || (echo "Missing site/memory/chron/2025/01/index.html" && exit 1)
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'site'
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
