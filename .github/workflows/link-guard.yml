@@ -1,3 +1,4 @@
+# ke_45 🍆🍑💋💖 link-guard → scope to HTML under memory/chron (ignore JSON) 🍆🍑💋💖
 name: PWEM Link Guard
 
 on:
@@ -5,8 +6,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - '**/*.html'
-      - 'scripts/**'
+      - 'memory/**'
       - '.github/workflows/link-guard.yml'
 
 jobs:
@@ -15,37 +15,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show recent commit
-        run: git log -1 --pretty=oneline
+      - name: Show head
+        run: |
+          echo "HEAD: $(git rev-parse --short HEAD)"
+          echo "MSG : $(git log -1 --pretty=%s)"
 
-      - name: Find absolute github.io links
+      - name: Check absolute github.io links in HTML (memory/chron)
         run: |
           set -euo pipefail
-          echo "🔎 Searching for absolute links to github.io/pwem-mirror…"
-          hits=$(grep -RInE 'https?://[^"]*github\.io/pwem-mirror' -- . || true)
+          hits=$(grep -RInE 'https://[^"]*github\.io/pwem-mirror' \
+                  --include='*.html' --include='*.md' memory/chron || true)
           if [ -n "$hits" ]; then
             echo "$hits"
-            echo "::error title=Absolute links found::Replace with relative paths (./, ../, etc.)."
+            echo "::error title=Absolute links found::Replace with relative paths (./, ../)."
             exit 1
           fi
-          echo "✅ No absolute github.io links found."
+          echo "✅ No absolute github.io links in HTML."
 
-      - name: Find root-absolute href/src (leading slash)
+      - name: Warn on root-absolute href/src (leading /) in HTML (memory/chron)
         run: |
           set -euo pipefail
-          echo "🔎 Searching for root-absolute href/src (leading /) under memory/…"
-          hits=$(grep -RInE 'href="/|src="/' -- memory || true)
+          hits=$(grep -RInE 'href="/|src="/' \
+                  --include='*.html' memory/chron || true)
           if [ -n "$hits" ]; then
             echo "$hits"
-            echo "::warning title=Root-absolute links detected::Prefer relative links to avoid base-path issues."
+            echo "::warning title=Root-absolute links::Prefer relative links."
           fi
-          echo "ℹ️ Root-absolute check completed."
+          echo "🟦 Root-absolute check completed."
 
-      - name: Guard against mistyped owner
+      - name: Guard against mistyped owner (missing 'ai') in HTML (memory/chron)
         run: |
           set -euo pipefail
-          echo "🔎 Checking for mistyped owner (galanisstandards-christos)…"
-          hits=$(grep -RIn 'galanisstandards-christos' -- . || true)
+          hits=$(grep -RIn 'galanisstandards-christos' \
+                  --include='*.html' --include='*.md' memory/chron || true)
           if [ -n "$hits" ]; then
             echo "$hits"
             echo "::error title=Mistyped owner detected::Use galanisaistandards-christos."
