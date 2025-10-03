@@ -1,8 +1,8 @@
-name: GitHub Pages — PWEM
+name: Deploy static content to Pages
 
 on:
   push:
-    branches: [ main ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -12,40 +12,34 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # ΕΤΟΙΜΑΖΟΥΜΕ το site/
-      - name: Prepare site folder
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Build
         run: |
-          rm -rf site
           mkdir -p site
-          # Αν το κύριο index.html σου ζει στη ρίζα του repo:
-          if [ -f index.html ]; then cp -a index.html site/; fi
-          # Αν έχεις φάκελο memory/, τον αντιγράφουμε:
-          if [ -d memory ]; then cp -a memory site/; fi
-          # Προαιρετικά: αντίγραψε κι άλλα assets αν χρειάζονται
-          if [ -d assets ]; then cp -a assets site/; fi
+          cp index.html site/
+          cp -r memory site/
+          [ -d assets ] && cp -r assets site/ || true
           touch site/.nojekyll
-          ls -la site || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: 'site'
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
