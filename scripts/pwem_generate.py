@@ -1,6 +1,6 @@
 import os, json, pathlib, datetime
 
-BASE = "https://galanisstandards-christos.github.io/pwem-mirror/"
+BASE = "https://galanisaistandards-christos.github.io/pwem-mirror/"
 ROOT = pathlib.Path(".").resolve()
 CHRON = ROOT / "memory" / "chron"
 CATALOG = ROOT / "memory" / "catalog.json"
