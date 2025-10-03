@@ -18,43 +18,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Build site/ (copy + .nojekyll + smoke index)
+      # ΕΤΟΙΜΑΖΟΥΜΕ το site/
+      - name: Prepare site folder
         run: |
-          set -euxo pipefail
-
-          # fresh site/
           rm -rf site
           mkdir -p site
-
-          # copy repo static files except CI bits
-          rsync -a --delete \
-            --exclude '.git' \
-            --exclude '.github' \
-            --exclude 'site' \
-            ./ site/
-
-          # include memory/ under site/
-          if [ -d "memory" ]; then
-            mkdir -p site/memory
-            rsync -a memory/ site/memory/
-          fi
-
-          # no jekyll
+          # Αν το κύριο index.html σου ζει στη ρίζα του repo:
+          if [ -f index.html ]; then cp -a index.html site/; fi
+          # Αν έχεις φάκελο memory/, τον αντιγράφουμε:
+          if [ -d memory ]; then cp -a memory site/; fi
+          # Προαιρετικά: αντίγραψε κι άλλα assets αν χρειάζονται
+          if [ -d assets ]; then cp -a assets site/; fi
           touch site/.nojekyll
-
-          # SMOKE index so the check URL never 404s
-          mkdir -p site/memory/chron/2025/01
-          cat > site/memory/chron/2025/01/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>PWEM Memory Smoke</title>
-          <h1>PWEM Memory ✅</h1>
-          <p>If you see this, GitHub Pages is LIVE.</p>
-          <p><a href="/pwem-mirror/">Home</a></p>
-          HTML
+          ls -la site || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -66,8 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
-        id: deploy
+        id: deployment
         uses: actions/deploy-pages@v4
