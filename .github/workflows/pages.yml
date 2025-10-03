@@ -18,43 +18,45 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Prepare static site
-        shell: bash
+      - name: Build site/ (copy + .nojekyll + smoke index)
         run: |
-          set -euo pipefail
+          set -euxo pipefail
+
+          # fresh site/
           rm -rf site
           mkdir -p site
-          touch site/.nojekyll
 
-          # 1) root smoke index
-          cat > site/index.html <<'HTML'
-          <!doctype html><meta charset="utf-8">
-          <title>PWEM live</title><h1>PWEM is LIVE ✅</h1>
-          <p><a href="/pwem-mirror/memory/chron/2025/01/">goto memory/chron/2025/01/</a></p>
-          HTML
+          # copy repo static files except CI bits
+          rsync -a --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'site' \
+            ./ site/
 
-          # 2) copy your memory into the published tree
-          mkdir -p site/memory
-          cp -a memory/. site/memory/ || true
-
-          # 3) guaranteed deep index (smoke)
-          mkdir -p site/memory/chron/2025/01
-          if [ ! -f site/memory/chron/2025/01/index.html ]; then
-            cat > site/memory/chron/2025/01/index.html <<'HTML'
-            <!doctype html><meta charset="utf-8">
-            <title>PWEM chron 2025/01</title>
-            <h1>PWEM chron 2025/01 ✅</h1>
-            HTML
+          # include memory/ under site/
+          if [ -d "memory" ]; then
+            mkdir -p site/memory
+            rsync -a memory/ site/memory/
           fi
 
-          echo "---- SITE TREE ----"
-          ls -la site
-          echo
-          find site -maxdepth 4 -type f | sort
+          # no jekyll
+          touch site/.nojekyll
 
-      - name: Upload Pages artifact
+          # SMOKE index so the check URL never 404s
+          mkdir -p site/memory/chron/2025/01
+          cat > site/memory/chron/2025/01/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>PWEM Memory Smoke</title>
+          <h1>PWEM Memory ✅</h1>
+          <p>If you see this, GitHub Pages is LIVE.</p>
+          <p><a href="/pwem-mirror/">Home</a></p>
+          HTML
+
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -62,13 +64,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
-        id: deployment
+        id: deploy
         uses: actions/deploy-pages@v4
