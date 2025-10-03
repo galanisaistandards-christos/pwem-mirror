@@ -1,0 +1,54 @@
+name: PWEM Link Guard
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/*.html'
+      - 'scripts/**'
+      - '.github/workflows/link-guard.yml'
+
+jobs:
+  link-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show recent commit
+        run: git log -1 --pretty=oneline
+
+      - name: Find absolute github.io links
+        run: |
+          set -euo pipefail
+          echo "🔎 Searching for absolute links to github.io/pwem-mirror…"
+          hits=$(grep -RInE 'https?://[^"]*github\.io/pwem-mirror' -- . || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error title=Absolute links found::Replace with relative paths (./, ../, etc.)."
+            exit 1
+          fi
+          echo "✅ No absolute github.io links found."
+
+      - name: Find root-absolute href/src (leading slash)
+        run: |
+          set -euo pipefail
+          echo "🔎 Searching for root-absolute href/src (leading /) under memory/…"
+          hits=$(grep -RInE 'href="/|src="/' -- memory || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::warning title=Root-absolute links detected::Prefer relative links to avoid base-path issues."
+          fi
+          echo "ℹ️ Root-absolute check completed."
+
+      - name: Guard against mistyped owner
+        run: |
+          set -euo pipefail
+          echo "🔎 Checking for mistyped owner (galanisstandards-christos)…"
+          hits=$(grep -RIn 'galanisstandards-christos' -- . || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error title=Mistyped owner detected::Use galanisaistandards-christos."
+            exit 1
+          fi
+          echo "✅ No mistyped owner found."
