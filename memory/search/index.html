@@ -1,8 +1,7 @@
 <!doctype html>
 <html lang="el">
-<head>
 <meta charset="utf-8">
-<title>PWEM · Αναζήτηση</title>
+<title>PWEM · Search</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;margin:24px}
@@ -11,81 +10,102 @@
   form{margin:16px 0}
   input[type=text]{padding:8px 10px;border:1px solid #ddd;border-radius:8px;min-width:260px}
   button{padding:8px 12px;border:1px solid #ddd;border-radius:8px;background:#fafafa;cursor:pointer}
-  ul{list-style:none;padding:0;margin:16px 0}
+  ul{list-style:none;padding:0}
   li{padding:10px 12px;border:1px solid #e3e3e3;border-radius:10px;margin:8px 0}
   a{text-decoration:none}
   code{background:#f6f6f6;padding:2px 4px;border-radius:6px}
   small{color:#666}
 </style>
-</head>
-<body>
-  <h1>Αναζήτηση PWEM</h1>
-  <p class="note">Διαβάζει το <code>catalog.public.json</code> από το mirror και φιλτράρει με λέξη-κλειδί.</p>
 
-  <form id="f">
-    <input id="q" type="text" placeholder="λέξη-κλειδί (π.χ. BESS)">
-    <button>Αναζήτηση</button>
-    <button type="button" id="clear">Καθαρισμός</button>
-  </form>
+<h1>Αναζήτηση PWEM</h1>
+<p class="note">
+  Πληκτρολόγησε λέξη-κλειδί (π.χ. <code>BESS</code>) και θα σαρώσω τους μήνες του 2025.
+  Επιστρέφω το <strong>πρώτο</strong> εύρημα χρονικά (αύξουσα ταξινόμηση).
+</p>
 
-  <div id="summary"></div>
-  <ul id="results"></ul>
+<form id="f">
+  Λέξη-κλειδί:
+  <input id="q" type="text" placeholder="π.χ. BESS">
+  <button>Αναζήτηση</button>
+</form>
+
+<ul id="results"></ul>
 
 <script>
-const params = new URLSearchParams(location.search);
-const qInput = document.getElementById('q');
-qInput.value = params.get('q') || '';
+(async () => {
+  const $ = (s)=>document.querySelector(s);
+  const resultsEl = $('#results');
+  const form = $('#f'), qInput = $('#q');
 
-const CATALOG_URL = '../catalog.public.json'; // από /memory/search/ προς /memory/
+  // Προ-γέμισμα από ?q=
+  const params = new URLSearchParams(location.search);
+  if (params.get('q')) qInput.value = params.get('q');
 
-function escapeHtml(s){
-  return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function matchItem(it, q){
-  if(!q) return true;
-  const hay = [it.title||'', (it.tags||[]).join(' '), it.url||''].join(' ').toLowerCase();
-  return hay.includes(q.toLowerCase());
-}
-function render(items, q){
-  const ul = document.getElementById('results');
-  ul.innerHTML = '';
-  document.getElementById('summary').innerHTML =
-    q ? `Βρέθηκαν <strong>${items.length}</strong> για <code>${escapeHtml(q)}</code>.`
-      : `Σύνολο καταχωρίσεων: <strong>${items.length}</strong>.`;
-  for(const it of items){
-    const li = document.createElement('li');
-    li.innerHTML = `<a href="${it.url}">${escapeHtml(it.title || it.url)}</a>
-                    <small> · ${it.date || ''}</small>`;
-    ul.appendChild(li);
-  }
-}
-async function loadCatalog(){
-  const res = await fetch(CATALOG_URL, {cache:'no-store'});
-  if(!res.ok) throw new Error('Load error: ' + res.status);
-  return res.json();
-}
-async function run(){
-  try{
-    const data = await loadCatalog();
-    const q = qInput.value.trim();
-    let items = (data.items||[]).filter(it => matchItem(it, q));
-    items.sort((a,b)=>(a.date||'').localeCompare(b.date||'')); // αύξουσα
-    render(items, q);
-    if(params.get('first')==='1' && q && items[0]) location.href = items[0].url;
-  }catch(err){
-    document.getElementById('summary').textContent = 'Σφάλμα φόρτωσης: ' + err.message;
-  }
-}
-document.getElementById('f').addEventListener('submit', (e)=>{
-  e.preventDefault();
-  const q = qInput.value.trim();
-  history.replaceState(null,'', q?`?q=${encodeURIComponent(q)}`:'');
-  run();
-});
-document.getElementById('clear').addEventListener('click', ()=>{
-  qInput.value=''; history.replaceState(null,'',''); run();
-});
-run();
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    resultsEl.innerHTML = '';
+    const needle = (qInput.value||'').trim();
+    if (!needle) { resultsEl.innerHTML = '<li>Δώσε λέξη-κλειδί.</li>'; return; }
+
+    // Βάση για GitHub Pages: /pwem-mirror/memory/search/ => ../chron/2025/
+    const year = '2025';
+    const months = ['01','02','03','04','05','06','07','08']; // επεκτείνεται εύκολα
+    const base = '../chron/'+year+'/';
+
+    // Helper: fetch text with μικρή καθυστέρηση για ήπιο crawling
+    const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+    async function getText(url){
+      const res = await fetch(url, {cache:'no-store'});
+      if (!res.ok) throw new Error('HTTP '+res.status+' '+url);
+      return await res.text();
+    }
+
+    // Σάρωση κατά μήνα (αύξουσα)
+    for (const mm of months) {
+      try{
+        const monthIndexUrl = base+mm+'/index.html';
+        const monthHtml = await getText(monthIndexUrl);
+        // Πάρε links προς ημερήσια αρχεία *.html εκτός από index.html
+        const doc = new DOMParser().parseFromString(monthHtml, 'text/html');
+        const dayLinks = [...doc.querySelectorAll('a[href$=".html"]')]
+          .map(a => ({href:a.getAttribute('href'), text:a.textContent.trim()}))
+          .filter(x => x.href && !/index\.html$/i.test(x.href));
+
+        // ταξινόμηση αύξουσα με βάση το όνομα (π.χ. 12.html)
+        dayLinks.sort((a,b)=>a.href.localeCompare(b.href, 'el', {numeric:true}));
+
+        for (const d of dayLinks) {
+          // υποστήριξη και σχετικών και απόλυτων
+          const dayUrl = d.href.match(/^https?:\/\//) ? d.href : (base+mm+'/'+d.href.replace(/^\.\//,''));
+          await sleep(80);
+          const dayHtml = await getText(dayUrl);
+
+          // απλή αναζήτηση στο textContent
+          const foundAt = dayHtml.toLowerCase().indexOf(needle.toLowerCase());
+          if (foundAt >= 0) {
+            // μικρό απόσπασμα
+            const snippet = dayHtml.substring(Math.max(0,foundAt-80), foundAt+120)
+              .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+            resultsEl.innerHTML = `
+              <li>
+                <a href="${dayUrl}"><strong>Πρώτο εύρημα:</strong> ${d.text || dayUrl}</a><br>
+                <small>${year}/${mm}</small><br>
+                <code>...${snippet}...</code>
+              </li>`;
+            return; // σταματάμε στο πρώτο hit
+          }
+        }
+      }catch(err){
+        console.warn('Σφάλμα στο μήνα', mm, err);
+      }
+    }
+
+    resultsEl.innerHTML = `<li>Δεν βρέθηκε εμφάνιση της «${needle}» στους ${months.length} μήνες του ${year}.</li>`;
+  });
+
+  // auto-run αν έχουμε ?q=
+  if (qInput.value) form.requestSubmit();
+})();
 </script>
-</body>
 </html>
