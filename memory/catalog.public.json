@@ -1,8 +1,64 @@
 {
-  "version": "1.0",
-  "updated_at": "2025-08-29T00:00:00Z",
-  "latest": "https://raw.githubusercontent.com/galanisstandards-christos/pwem-mirror/main/memory/chron/2025/01/mem2-Gal-2025-01--001-from-001.json",
+  "version": "1.1",
+  "updated_at": "2025-10-05T00:00:00Z",
+  "owner": "galanisaistandards-christos",
+  "latest": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/08/index.html",
   "items": [
-    "https://raw.githubusercontent.com/galanisstandards-christos/pwem-mirror/main/memory/chron/2025/01/mem2-Gal-2025-01--001-from-001.json"
+    {
+      "title": "PWEM • 2025/01 — Ιανουάριος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/01/index.html",
+      "date": "2025-01-01",
+      "type": "html",
+      "tags": ["index","2025","01"]
+    },
+    {
+      "title": "PWEM • 2025/02 — Φεβρουάριος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/02/index.html",
+      "date": "2025-02-01",
+      "type": "html",
+      "tags": ["index","2025","02"]
+    },
+    {
+      "title": "PWEM • 2025/03 — Μάρτιος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/03/index.html",
+      "date": "2025-03-01",
+      "type": "html",
+      "tags": ["index","2025","03"]
+    },
+    {
+      "title": "PWEM • 2025/04 — Απρίλιος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/04/index.html",
+      "date": "2025-04-01",
+      "type": "html",
+      "tags": ["index","2025","04"]
+    },
+    {
+      "title": "PWEM • 2025/05 — Μάιος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/05/index.html",
+      "date": "2025-05-01",
+      "type": "html",
+      "tags": ["index","2025","05"]
+    },
+    {
+      "title": "PWEM • 2025/06 — Ιούνιος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/06/index.html",
+      "date": "2025-06-01",
+      "type": "html",
+      "tags": ["index","2025","06"]
+    },
+    {
+      "title": "PWEM • 2025/07 — Ιούλιος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/07/index.html",
+      "date": "2025-07-01",
+      "type": "html",
+      "tags": ["index","2025","07"]
+    },
+    {
+      "title": "PWEM • 2025/08 — Αύγουστος 2025 (index)",
+      "url": "https://galanisaistandards-christos.github.io/pwem-mirror/memory/chron/2025/08/index.html",
+      "date": "2025-08-01",
+      "type": "html",
+      "tags": ["index","2025","08"]
+    }
   ]
 }
