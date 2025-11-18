@@ -1,13 +1,13 @@
 {
   "version": 2,
   "month": "2025-01",
-  "built_at": "2025-11-17T03:53:14Z",
+  "built_at": "2025-11-18T03:49:21Z",
   "count": 1,
   "results": [
     {
       "path": "chron/2025/01/mem2-Gal-2025-01--001-from-001.json",
       "size": 1498752,
-      "mtime": 1763351593
+      "mtime": 1763437761
     }
   ]
 }
